@@ -67,6 +67,10 @@ const (
 	teliaCloudTokenURL = "https://cloud-auth.telia.se/auth/realms/telia_se/protocol/openid-connect/token"
 	teliaCloudAuthURL  = "https://cloud-auth.telia.se/auth/realms/telia_se/protocol/openid-connect/auth"
 	teliaCloudClientID = "desktop"
+
+	comhemCloudTokenURL = "https://cloud.comhem.se/auth/realms/comhem/protocol/openid-connect/token"
+	comhemCloudAuthURL  = "https://cloud.comhem.se/auth/realms/comhem/protocol/openid-connect/auth"
+	comhemCloudClientID = "desktop"
 )
 
 var (
@@ -112,15 +116,18 @@ func init() {
 			fmt.Printf("Choose authentication type:\n" +
 				"1: Standard authentication - use this if you're a normal Jottacloud user.\n" +
 				"2: Legacy authentication - this is only required for certain whitelabel versions of Jottacloud and not recommended for normal users.\n" +
-				"3: Telia Cloud authentication - use this if you are using Telia Cloud.\n")
+				"3: Telia Cloud authentication - use this if you are using Telia Cloud.\n" +
+				"4: ComHem Cloud authentication - use this if you are using ComHem Cloud.\n")
 
-			switch config.ChooseNumber("Your choice", 1, 3) {
+			switch config.ChooseNumber("Your choice", 1, 4) {
 			case 1:
 				v2config(ctx, name, m)
 			case 2:
 				v1config(ctx, name, m)
 			case 3:
 				teliaCloudConfig(ctx, name, m)
+			case 4:
+				comhemCloudConfig(ctx, name, m)
 			}
 		},
 		Options: []fs.Option{{
@@ -280,6 +287,46 @@ func teliaCloudConfig(ctx context.Context, name string, m configmap.Mapper) {
 	m.Set("configVersion", strconv.Itoa(configVersion))
 	m.Set(configClientID, teliaCloudClientID)
 	m.Set(configTokenURL, teliaCloudTokenURL)
+}
+
+func comhemCloudConfig(ctx context.Context, name string, m configmap.Mapper) {
+	comhemCloudOauthConfig := &oauth2.Config{
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  comhemCloudAuthURL,
+			TokenURL: comhemCloudTokenURL,
+		},
+		ClientID:    comhemCloudClientID,
+		Scopes:      []string{"openid", "jotta-default", "offline_access"},
+		RedirectURL: oauthutil.RedirectLocalhostURL,
+	}
+
+	err := oauthutil.Config(ctx, "jottacloud", name, m, comhemCloudOauthConfig, nil)
+	if err != nil {
+		log.Fatalf("Failed to configure token: %v", err)
+		return
+	}
+
+	fmt.Printf("\nDo you want to use a non standard device/mountpoint e.g. for accessing files uploaded using the official Jottacloud client?\n\n")
+	if config.Confirm(false) {
+		oAuthClient, _, err := oauthutil.NewClient(ctx, name, m, comhemCloudOauthConfig)
+		if err != nil {
+			log.Fatalf("Failed to load oAuthClient: %s", err)
+		}
+
+		srv := rest.NewClient(oAuthClient).SetRoot(rootURL)
+		apiSrv := rest.NewClient(oAuthClient).SetRoot(apiURL)
+
+		device, mountpoint, err := setupMountpoint(ctx, srv, apiSrv)
+		if err != nil {
+			log.Fatalf("Failed to setup mountpoint: %s", err)
+		}
+		m.Set(configDevice, device)
+		m.Set(configMountpoint, mountpoint)
+	}
+
+	m.Set("configVersion", strconv.Itoa(configVersion))
+	m.Set(configClientID, comhemCloudClientID)
+	m.Set(configTokenURL, comhemCloudTokenURL)
 }
 
 // v1config configure a jottacloud backend using legacy authentication
